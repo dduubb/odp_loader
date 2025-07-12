@@ -1,0 +1,26 @@
+# Configuration settings for odp_loader
+AssessedValues:
+  socrata_url: "https://datacatalog.cookcountyil.gov/resource/"
+  id: "uzyt-m557"
+  batch_column: "year"
+  uid: "row_id"
+  dtype:
+    pin: object
+    year: Int64
+    class: object
+    township_code: object
+    township_name: object
+    mailed_bldg: Float64
+    mailed_land: Float64
+    mailed_tot: Float64
+    certified_bldg: Float64
+    certified_land: Float64
+    certified_tot: Float64
+    board_bldg: Float64
+    nbhd: object
+    board_land: Float64
+    board_tot: Float64
+    row_id: object
+  destination:
+    schema: odp
+    table: CCAO_AssessedValues
