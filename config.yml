@@ -1,6 +1,7 @@
 # Configuration settings for odp_loader
 AssessedValues:
   socrata_url: "https://datacatalog.cookcountyil.gov/resource/"
+  socrata_key: "cookcounty"
   id: "uzyt-m557"
   batch_column: "year"
   uid: "row_id"
