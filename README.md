@@ -1,3 +1,4 @@
+# odp_loader
 # odp\_loader
 
 **odp\_loader** is a modular, configurable data pipeline for downloading, transforming, and writing structured data from Socrata Open Data Portals (ODPs) to Microsoft SQL Server.
@@ -84,11 +85,11 @@ socrata:
 
 ```mermaid
 graph TD
-    A[main.py] --> B[config.yml + secrets.yml]
+    A[main.py] -->|Loads| B[config.yml + secrets.yml]
     B --> C[downloader.py]
     C --> D[pandas DataFrame]
     D --> E[writer.py]
-    E --> F[SQL Server Table]
+    E --> F[(SQL Server table)]
     F --> G[SQL View (Transform)]
 ```
 
@@ -107,12 +108,10 @@ graph TD
 
 ## 📌 Roadmap
 
-* [ ] Add automated transform SQL generator
+* [ ] Batch by batch upsert
 * [ ] CLI support for `--mode download-only` / `--overwrite`
 * [ ] Scheduler integration (Task Scheduler or cron)
 * [ ] Parquet export option
-
----
 
 
 
