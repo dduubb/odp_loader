@@ -1,85 +1,81 @@
-import pandas as pd
+import os
 import requests
-from requests.adapters import HTTPAdapter
-from urllib3.util.retry import Retry
+import pandas as pd
+from typing import Dict, Any, Generator
 
-def create_session(app_token=None):
-    session = requests.Session()
-    retries = Retry(total=5, backoff_factor=1, status_forcelist=[429, 500, 502, 503, 504])
-    session.mount('https://', HTTPAdapter(max_retries=retries))
-    if app_token:
-        session.headers.update({"X-App-Token": app_token})
-    return session
+CHUNK_SIZE = 50000
 
-def fetch_data(dataset_config, year, secrets=None):
-    base_url = dataset_config["socrata_url"]
-    dataset_id = dataset_config["id"]
-    batch_column = dataset_config.get("batch_column", "year")
-    dtype = dataset_config["dtype"]
+def fetch_data_iter(config: Dict[str, Any], year: int) -> Generator[pd.DataFrame, None, None]:
+    url = config["socrata_url"] + config["id"] + ".json"
+    batch_column = config["batch_column"]
+    dtype = config["dtype"]
+    socrata_key = config.get("socrata_key")
 
-    app_token = None
-    socrata_key = dataset_config.get("socrata_key")
-    if socrata_key and secrets and "socrata" in secrets:
-        app_token = secrets["socrata"].get(socrata_key, {}).get("app_token")
+    headers = {}
+    if socrata_key:
+        headers["X-App-Token"] = os.environ.get(socrata_key, "")
 
-    session = create_session(app_token)
-    url = f"{base_url}{dataset_id}.json"
+    # Fetch expected total rows
+    count_url = f"{config['socrata_url']}{config['id']}?$select=count(*)&$where={batch_column}={year}"
+    resp = requests.get(count_url, headers=headers)
+    resp.raise_for_status()
+    total_rows_expected = int(resp.json()[0]["count"])
+    print(f"📏 Expected count (from Socrata): {total_rows_expected}")
+
     offset = 0
-    limit = 50000
-    all_chunks = []
-    total_rows = 0
+    running_total = 0
 
-    print(f"📥 Fetching {dataset_id} for {batch_column} = {year}")
     while True:
         params = {
-            "$limit": limit,
+            "$limit": CHUNK_SIZE,
             "$offset": offset,
-            "$where": f"{batch_column} = {year}"
+            "$where": f"{batch_column}={year}"
         }
-        response = session.get(url, params=params)
-        if response.status_code != 200:
-            raise RuntimeError(f"Failed to fetch: {response.status_code} - {response.text}")
+        response = requests.get(url, params=params, headers=headers)
+        response.raise_for_status()
+        chunk = pd.DataFrame(response.json())
 
-        data = response.json()
-        if not data:
-            print("🎯 Reached empty page. Done.")
+        if chunk.empty:
             break
 
-        df = pd.DataFrame(data)
-
+        # Ensure all expected columns exist
         for col in dtype:
-            if col not in df.columns:
-                df[col] = pd.NA
-        df = df[list(dtype.keys())]
+            if col not in chunk.columns:
+                chunk[col] = pd.NA
+        chunk = chunk[list(dtype.keys())]
 
+        # Apply explicit dtype casting
         for col, target_type in dtype.items():
-            if target_type.lower().startswith(("int", "float")):
-                df[col] = pd.to_numeric(df[col], errors="coerce")
-        df = df.astype(dtype)
+            try:
+                if target_type.lower().startswith("float"):
+                    chunk[col] = pd.to_numeric(chunk[col], errors="coerce")
+                elif target_type.lower().startswith("int"):
+                    chunk[col] = pd.to_numeric(chunk[col], errors="coerce", downcast="integer")
+                else:
+                    chunk[col] = chunk[col].astype(str).str.strip()
+            except Exception as e:
+                print(f"⚠️ Failed to cast column '{col}' to {target_type}: {e}")
 
-        print(f"✅ {len(df)} rows fetched (offset={offset})")
-        total_rows += len(df)
-        print(f"📊 Running total rows: {total_rows}")
+        formats = config.get("format", {})
 
-        all_chunks.append(df)
+        # Extract based on regex format if declared
+        for col, pattern in formats.items():
+            if col in chunk.columns:
+                chunk[col] = chunk[col].astype(str).str.extract(fr"({pattern})")[0]
 
-        if len(df) < limit:
+
+        # Flatten any stray tuples
+        for col in chunk.columns:
+            if chunk[col].apply(lambda x: isinstance(x, tuple)).any():
+                chunk[col] = chunk[col].apply(lambda x: x[0] if isinstance(x, tuple) else x)
+
+        print(f"✅ {len(chunk)} rows fetched (offset={offset})")
+        running_total += len(chunk)
+        print(f"📊 Running total rows: {running_total}")
+
+        yield chunk
+
+        offset += CHUNK_SIZE
+        if len(chunk) < CHUNK_SIZE:
             print("🎯 Final batch fetched. Done.")
             break
-
-        offset += limit
-
-    expected_count_url = f"{base_url}{dataset_id}.json?$select=count(row_id)&$where={batch_column}={year}"
-    expected_count_resp = session.get(expected_count_url)
-    expected_count = expected_count_resp.json()[0]['count_row_id']
-    print("📏 Expected count (from Socrata):", expected_count)
-
-    if all_chunks:
-        final_df = pd.concat(all_chunks, ignore_index=True)
-        print("🧾 Final DataFrame shape:", final_df.shape)
-        final_df.drop_duplicates(subset='row_id', inplace=True)
-        print("🔍 After drop_duplicates on row_id:", final_df.shape)
-        # final_df["row_id"].to_csv(f"row_ids_{year}.csv", index=False)
-        return final_df
-    else:
-        return pd.DataFrame(columns=dtype.keys())
